@@ -1,0 +1,77 @@
+# Protocols
+
+Some subsystems (and in the case of KEY and EMIT, the core) re-
+quire drivers to implement certain words in a certain way. For
+example, the core requires drivers to implement (key?) and
+(emit) or else it won't know how to provide a console.
+
+These protocols are described here.
+
+# TTY protocol
+
+(key?)     -- c? f Returns whether a key has been pressed and,
+                   if it has, returns which key. When f is
+                   false, c is *not* placed in the stack.
+(emit)     c --    Spit a character on the console.
+
+# PS/2 protocol
+
+This protocol enables communication with a device that spits
+PS/2 keycodes.
+
+(ps2kc)   -- kc    Returns the next typed PS/2 keycode from the
+                   console. 0 if nothing was typed.
+
+# SPI Relay protocol
+
+This protocol enables communication with a SPI relay. This
+protocol is designed to support devices with multiple endpoints.
+To that end, (spie) takes a device ID argument, with a meaning
+that is up to the device itself. To disable all devices, supply
+0 to (spie).
+
+We expect relay devices to support only one enabled device at
+once. Enabling a specific device is expected to disable the
+previously enabled one.
+
+(spie)    n --     Enable SPI device
+(spix)    n -- n   Perform SPI exchange (push a number, get a
+                   number back)
+                  
+# Grid protocol
+
+A grid is a device that shows as a grid of ASCII characters and
+allows random access to it.
+
+COLS      -- n       Number of columns in the device
+LINES     -- n       Number of lines in the device
+CELL!     c pos --   Set character at pos
+
+Optional:
+NEWLN     ln --      "Enter" line ln
+CURSOR!   new old -- Move cursor from old pos to new pos
+
+"pos" is a simple number (y * cols) + x. For example, if we
+have 40 columns per line, the position (x, y) (12, 10) is 412.
+
+CELL! is not expected to be called with an out-of-range char-
+acter. For example, glyphs are often mapped starting at 0x20
+(space). On most systems, CELL! should not be called with c <
+0x20.If it is, CELL! should do nothing.
+
+NEWLN is called when we "enter" a new line, that is, when we
+overflow from previous line or when 0x0d ( ASCII CR ) is emit-
+ted.
+
+When this is called, the line being entered should be cleared
+of its contents. On some systems, some kinf of screen offset
+might be have to be set to give a "scrolling" effect. Now's the
+time.
+
+If it's not defined, the grid system uses multiple CELL!
+calls to clear it. On some devices, this is highly inefficient.
+Drivers for those devices should define NEWLINE.
+
+CURSOR! is called whenever we change the cursor's position. If
+not implemented, it will be a noop. It is never called with an
+out of range "pos" (greater than COLS*LINES).

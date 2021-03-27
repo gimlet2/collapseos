@@ -1,0 +1,270 @@
+# Implementation notes
+
+# Execution model
+
+After having read a line through readln, we want to interpret
+it. As a general rule, we go like this:
+
+1. read single word from line
+2. Can we find the word in dict?
+3. If yes, execute that word, goto 1
+4. Is it a number?
+5. If yes, push that number to PS, goto 1
+6. Error: undefined word.
+
+# What is a word?
+
+A word is a place in memory having a particular structure. Its
+first byte is a "word type" byte (see below), followed by a
+structure that depends on the word type. This structure is
+generally refered to as the Parameter Field (PF).
+
+# Stack management
+
+In all supported arches, The Parameter Stack and Return Stack
+tops are tracked by a registered assigned to this purpose. For
+example, in z80, it's SP and IX that do that. The value in those
+registers are referred to as PS Pointer (PSP) and RS Pointer
+(RSP).
+
+Those stacks are contiguous and grow in opposite directions. PS
+grows "down", RS grows "up".
+
+Stack underflow and overflow: In each native word involving
+PS popping, we check whether the stack is big enough. If it's
+not we go in "uflw" (underflow) error condition, then abort.
+
+This means that if you implement a native word that involves
+popping from PS, you are expected to call chkPS, for under-
+flow situations.
+
+We don't check RS for underflow because the cost of the check
+is significant and its usefulness is dubious: if RS isn't
+tightly in control, we're screwed anyways, and that, well
+before we reach underflow.
+
+Overflow condition happen when RSP and PSP meet somewhere in
+the middle. That check is made at each "next" call.
+
+# Dictionary entry
+
+A dictionary entry has this structure:
+
+- Xb name. Arbitrary long number of character (but can't be
+  bigger than input buffer, of course). not null-terminated
+- 2b prev offset
+- 1b name size + IMMEDIATE flag (7th bit)
+- 1b entry type
+- Parameter field (PF)
+
+The prev offset is the number of bytes between the prev field
+and the previous word's entry type.
+
+The size + flag indicate the size of the name field, with the
+7th bit being the IMMEDIATE flag.
+
+The entry type is simply a number corresponding to a type which
+will determine how the word will be executed. See "Word types"
+below.
+
+The vast majority of the time, a dictionary entry refers to a
+word. However, sometimes, it refers to something else. A "hook
+word" (see bootstrap.txt) is such an example.
+
+# Word types
+
+There are 6 word types in Collapse OS. Whenever you have a
+wordref, it's pointing to a byte with numbers 0 to 5. This
+number is the word type and the word's behavior depends on it.
+
+0: native. This words PFA contains native binary code and is
+jumped to directly.
+
+1: compiled. This word's PFA contains a list of wordrefs and its
+execution is described in "Executing a compiled word" below.
+
+2: cell. This word is usually followed by a 2-byte value in its
+PFA. Upon execution, the address of the PFA is pushed to PS.
+
+3: DOES>. This word is created by "DOES>" and is followed
+by a 2-bytes value as well as the address where "DOES>" was
+compiled. At that address is an wordref list exactly like in a
+compiled word. Upon execution, after having pushed its cell
+addr to PSP, it executes its reference exactly like a
+compiled word.
+
+4: alias. See usage.txt. PFA is like a cell, but instead of
+pushing it to PS, we execute it.
+
+5: ialias. Same as alias, but with an added indirection.
+
+# Executing a compiled word
+
+At its core, executing a word is pushing the wordref on PS and
+calling EXECUTE. Then, we let the word do its things. Some
+words are special, but most of them are of the "compiled"
+type, and that's their execution that we describe here.
+
+First of all, at all time during execution, the Interpreter
+Pointer (IP) points to the wordref we're executing next.
+
+When we execute a compiled word, the first thing we do is push
+IP to the Return Stack (RS). Therefore, RS' top of stack will
+contain a wordref to execute next, after we EXIT.
+
+At the end of every compiled word is an EXIT. This pops RS, sets
+IP to it, and continues.
+
+A compiled word is simply a list of wordrefs, but not all those
+wordrefs are 2 bytes in length. Some wordrefs are special. For
+example, a reference to (n) will be followed by an extra 2 bytes
+number. It's the responsibility of the (n) word to advance IP
+by 2 extra bytes.
+
+To be clear: It's not (n)'s word type that is special, it's a
+regular "native" word. It's the compilation of the (n) type,
+done in LITN, that is special. We manually compile a number
+constant at compilation time, which is what is expected in (n)'s
+implementation. Similar special things happen in (s), (br),
+(?br) and (loop).
+
+For example, the word defined by ": FOO 42 EMIT ;" would have
+an 8 bytes PF: a 2b ref to (n), 2b with 0x002a, a 2b ref to EMIT
+and then a 2b ref to EXIT.
+
+When executing this word, we first set IP to PF+2, then exec
+PF+0, that is, the (n) reference. (n), when executing, reads IP,
+pushes that value to PS, then advances IP by 2. This means that
+when we return to the "next" routine, IP points to PF+4, which
+next will execute. Before executing, IP is increased by 2, but
+it's the "not-increased" value (PF+4) that is executed, that is,
+EMIT. EMIT does its thing, doesn't touch IP, then returns to
+"next". We're still at PF+6, which then points to EXIT. EXIT
+pops RS into IP, which is the value that IP had before FOO was
+called. The "next" dance continues...
+
+# System variables
+
+There are some core variables in the core system that are
+referred to directly by their address in memory throughout the
+code. The place where they live is configurable by the SYSVARS
+constant in xcomp unit, but their relative offset is not. In
+fact, they're mostly referred to directly as their numerical
+offset along with a comment indicating what this offset refers
+to.
+
+SYSVARS occupy 0xa0 bytes in memory in addition to driver mem-
+ory, which typically follows SYSVARS.
+
+This system is a bit fragile because every time we change those
+offsets, we have to be careful to adjust all system variables
+offsets, but thankfully, there aren't many system variables.
+Here's a list of them:
+
+SYSVARS   FUTURE USES          +3c       BLK(*
++02       CURRENT              +3e       ~C!*
++04       HERE                 +41       ~C!ERR
++06       C<?                  +42       FUTURE USES
++08       FUTURE USES          +50       NL> character
++0a       FUTURE USES          +51       CURRENTPTR
++0c       C<*                  +53       EMIT ialias
++0e       WORDBUF              +55       KEY? ialias
++2e       BOOT C< PTR          +57       FUTURE USES
++30       IN>                  +60       INPUT BUFFER
++32       FUTURE USES          +a0       DRIVERS
++34       BLK@*
++36       BLK!*
++38       BLK>
++3a       BLKDTY
+
+CURRENT points to the last dict entry.
+
+HERE points to current write offset.
+
+C<* holds routine address called on C<. If the C<* override
+at 0x08 is nonzero, this routine is called instead.
+
+IN> is the current position in IN(, which is the input buffer.
+
+IN(* is a pointer to the input buffer, allocated at runtime.
+
+CURRENTPTR points to current CURRENT. The Forth CURRENT word
+doesn't return RAM+2 directly, but rather the value at this
+address. Most of the time, it points to RAM+2, but sometimes,
+when maintaining alternative dicts (during cross compilation
+for example), it can point elsewhere.
+
+BLK* "Disk blocks" in usage.txt.
+
+~C!* if nonzero, contains a jump to assembly code that overrides
+the routine that writes a byte to memory and then returns.
+Register usage is arch-dependent, see boot code for details.
+
+~C!ERR: When an error happens during ~C! write overrides, sets
+this byte to a nonzero value. Otherwise, stays at zero. Has to
+be reset to zero manually after an error.
+
+NL> is a single byte. If zero (default), NL> spits CR/LF. Other-
+wise, it spits the value of RAM+50.
+
+DRIVERS section is reserved for recipe-specific drivers.
+
+FUTURE USES section is unused for now.          
+
+# Initialization sequence
+
+(this describes the z80 boot sequence, but other arches have
+a very similar sequence, and, of course, once we enter Forth
+territory, identical)
+
+On boot, we jump to the "main" routine in B289 which does
+very few things.
+
+1. Set SP to PS_ADDR and IX to RS_ADDR.
+2. Set CURRENT to value of LATEST field in stable ABI.
+3. Set HERE to HERESTART const if defined, to CURRENT other-
+   wise.
+4. Initialize ~C! and ~C!ERR to 0.
+5. Execute the word referred to by 0x04 (BOOT) in stable ABI.
+
+In a normal system, BOOT is in core words at B396 and does a
+few things:
+
+1. Initialize a few core variables:
+    CURRENT*     -> CURRENT (RAM+02)
+    BOOT C< PTR  -> LATEST
+    C<* override -> 0
+2. Initialized ialiases in this way:
+     EMIT -> (emit)
+     KEY  -> (key)
+     NL   -> CRLF
+3. Set "C<*", the word that C< calls, to (boot<).
+4. Call INTERPRET which interprets boot source code until
+   ASCII EOT (4) is met. This usually initializes drivers.
+5. Initialize rdln buffer, _sys entry (for EMPTY), prints
+   "CollapseOS" and then calls (main).
+6. (main) interprets from rdln input (usually from KEY) until
+   EOT is met, then calls BYE.
+
+If, for some reason, you need to override an ialias at some
+point, you de-override it by re-setting it to the address of
+the word specified at step 2.
+
+# Stable ABI
+
+The Stable ABI lives at the beginning of the binary and prov-
+ides a way for Collapse OS code to access values that would
+otherwise be difficult to access. Here's the complete list of
+these references:
+
+04 BOOT addr         06 (uflw) addr      08 LATEST
+13 (oflw) addr       1a next addr
+
+BOOT, (uflw) and (oflw) exist because they are referred to
+before those words are defined (in core words). LATEST is a
+critical part of the initialization sequence.
+
+All Collapse OS binaries, regardless of architecture, have
+those values at those offsets of them. Some binaries are built
+to run at offset different than zero. This stable ABI lives at
+that offset, not 0.

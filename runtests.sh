@@ -1,20 +1,11 @@
-#/usr/bin/env bash
+#!/bin/sh -e
 
-set -e
-
-git submodule init
-git submodule update
 git clean -fxd
 
-cd tools/emul
-make
+make -C tests
 
-cd ../tests
-make
-
-# let's try again with an updated zasm
-cd ../emul
-make updatebootstrap all
-
-cd ../tests
-make
+# verify that stage.bin is stable
+cp cvm/stage.bin ref.bin
+make -C cvm updatebootstrap
+cmp cvm/stage.bin ref.bin
+rm ref.bin

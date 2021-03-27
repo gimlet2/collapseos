@@ -12,8 +12,7 @@ microcontrollers with low-tech tools. We accept only contributions advancing
 the project towards that goal.
 
 Although Collapse OS is mostly a software product, it's also a documentation
-repository. Improving documentation and recipes make the project advance
-towards its goal.
+repository. Improving documentation make the project advance towards its goal.
 
 That Collapse OS has such a narrow goal might disappoint many people who are
 enthusiastic about the technological achievement. Sorry for that.
@@ -64,3 +63,10 @@ and make post-collapse users much happier.
 It is frequently asked by would-be contributors whether I have tips for an
 optimal ramping up of skills. [I've put together a little document to answer
 that question](https://collapseos.org/skills.html).
+
+## Sending patches
+
+If you have patches to submit, please do so through the [mailing list][ml]. See
+<https://git-send-email.io/> for a guide.
+
+[ml]: https://lists.sr.ht/~vdupras/collapseos
